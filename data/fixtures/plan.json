@@ -1,0 +1,204 @@
+{
+  "windows": [
+    {
+      "start": "2026-09-11T07:00:00",
+      "end": "2026-09-11T11:00:00",
+      "status": "green",
+      "label": "Stable, good for focus work"
+    },
+    {
+      "start": "2026-09-11T11:00:00",
+      "end": "2026-09-11T13:00:00",
+      "status": "amber",
+      "label": "Pre-workout, watch the drop"
+    },
+    {
+      "start": "2026-09-11T13:00:00",
+      "end": "2026-09-11T18:00:00",
+      "status": "green",
+      "label": "Post-workout, high sensitivity"
+    },
+    {
+      "start": "2026-09-11T18:00:00",
+      "end": "2026-09-11T22:00:00",
+      "status": "green",
+      "label": "Dinner covered"
+    },
+    {
+      "start": "2026-09-11T22:00:00",
+      "end": "2026-09-12T07:30:00",
+      "status": "red",
+      "label": "Alcohol + overnight hypo risk"
+    }
+  ],
+  "scheduled": [
+    {
+      "type": "exercise",
+      "t_start": "2026-09-11T12:00:00",
+      "duration_min": 45.0,
+      "source": "proposed",
+      "uncertainty": 0.1,
+      "label": "45 min run",
+      "carbs_g": 0.0,
+      "fat_g": 0.0,
+      "protein_g": 0.0,
+      "fiber_g": 0.0,
+      "units": 0.0,
+      "insulin_kind": null,
+      "ethanol_g": 0.0,
+      "caffeine_mg": 0.0,
+      "water_ml": 0.0,
+      "intensity": 0.6,
+      "exercise_kind": "aerobic",
+      "sleep_quality": 1.0,
+      "severity": 0.0
+    },
+    {
+      "type": "meal",
+      "t_start": "2026-09-11T23:30:00",
+      "duration_min": 0.0,
+      "source": "proposed",
+      "uncertainty": 0.1,
+      "label": "20 g bedtime snack",
+      "carbs_g": 20.0,
+      "fat_g": 0.0,
+      "protein_g": 0.0,
+      "fiber_g": 0.0,
+      "units": 0.0,
+      "insulin_kind": null,
+      "ethanol_g": 0.0,
+      "caffeine_mg": 0.0,
+      "water_ml": 0.0,
+      "intensity": 0.0,
+      "exercise_kind": null,
+      "sleep_quality": 1.0,
+      "severity": 0.0
+    }
+  ],
+  "energy": [
+    {
+      "t": "2026-09-11T07:00:00",
+      "y": 84.0
+    },
+    {
+      "t": "2026-09-11T08:00:00",
+      "y": 62.7
+    },
+    {
+      "t": "2026-09-11T09:00:00",
+      "y": 58.2
+    },
+    {
+      "t": "2026-09-11T10:00:00",
+      "y": 69.1
+    },
+    {
+      "t": "2026-09-11T11:00:00",
+      "y": 79.4
+    },
+    {
+      "t": "2026-09-11T12:00:00",
+      "y": 81.9
+    },
+    {
+      "t": "2026-09-11T13:00:00",
+      "y": 79.6
+    },
+    {
+      "t": "2026-09-11T14:00:00",
+      "y": 81.0
+    },
+    {
+      "t": "2026-09-11T15:00:00",
+      "y": 83.0
+    },
+    {
+      "t": "2026-09-11T16:00:00",
+      "y": 85.1
+    },
+    {
+      "t": "2026-09-11T17:00:00",
+      "y": 87.0
+    },
+    {
+      "t": "2026-09-11T18:00:00",
+      "y": 88.6
+    },
+    {
+      "t": "2026-09-11T19:00:00",
+      "y": 87.8
+    },
+    {
+      "t": "2026-09-11T20:00:00",
+      "y": 50.3
+    },
+    {
+      "t": "2026-09-11T21:00:00",
+      "y": 58.4
+    },
+    {
+      "t": "2026-09-11T22:00:00",
+      "y": 73.1
+    },
+    {
+      "t": "2026-09-11T23:00:00",
+      "y": 83.9
+    },
+    {
+      "t": "2026-09-12T00:00:00",
+      "y": 88.1
+    },
+    {
+      "t": "2026-09-12T01:00:00",
+      "y": 86.1
+    },
+    {
+      "t": "2026-09-12T02:00:00",
+      "y": 86.2
+    },
+    {
+      "t": "2026-09-12T03:00:00",
+      "y": 87.2
+    },
+    {
+      "t": "2026-09-12T04:00:00",
+      "y": 81.3
+    },
+    {
+      "t": "2026-09-12T05:00:00",
+      "y": 72.9
+    },
+    {
+      "t": "2026-09-12T06:00:00",
+      "y": 69.0
+    },
+    {
+      "t": "2026-09-12T07:00:00",
+      "y": 67.8
+    }
+  ],
+  "tir_pct": 82.35294117647058,
+  "p_hypo": 0.31,
+  "explanation": {
+    "confidence": 0.7,
+    "data_used": [
+      "calendar",
+      "CGM history",
+      "pump log",
+      "sleep"
+    ],
+    "data_missing": [
+      "whether dinner is out or at home"
+    ],
+    "top_factors": [
+      "Midday run lands in the flattest window",
+      "Drinks after 22:00 push hypo risk into your sleep"
+    ]
+  },
+  "safety": {
+    "status": "ok",
+    "reason": "",
+    "needed": [],
+    "rule_id": null
+  }
+}

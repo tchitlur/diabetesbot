@@ -1,0 +1,86 @@
+{
+  "verdict": "merged_with_changes",
+  "changes_requested": "Keep Friday's session in the evening; move Mon/Wed to 06:30 only.",
+  "deltas_30d": [
+    {
+      "name": "Time in range",
+      "baseline": 68.0,
+      "proposed": 74.0,
+      "unit": "%"
+    },
+    {
+      "name": "Hypos per week",
+      "baseline": 2.8,
+      "proposed": 1.6,
+      "unit": "count"
+    },
+    {
+      "name": "Mean glucose",
+      "baseline": 149.6,
+      "proposed": 148.1,
+      "unit": "mg/dL"
+    },
+    {
+      "name": "Energy score",
+      "baseline": 71.0,
+      "proposed": 76.0,
+      "unit": "0-100"
+    }
+  ],
+  "deltas_10y": [
+    {
+      "name": "HbA1c",
+      "baseline": 6.85,
+      "proposed": 6.8,
+      "unit": "%"
+    },
+    {
+      "name": "Retinopathy risk",
+      "baseline": 0.1166,
+      "proposed": 0.1154,
+      "unit": "probability"
+    },
+    {
+      "name": "Nephropathy risk",
+      "baseline": 0.0777,
+      "proposed": 0.0769,
+      "unit": "probability"
+    }
+  ],
+  "risk10_baseline": {
+    "eye": 0.1166,
+    "kidney": 0.0777,
+    "nerve": 0.0971,
+    "cardio": 0.0874,
+    "liver": 0.0291
+  },
+  "risk10_proposed": {
+    "eye": 0.1154,
+    "kidney": 0.0769,
+    "nerve": 0.0962,
+    "cardio": 0.0866,
+    "liver": 0.0289
+  },
+  "explanation": {
+    "confidence": 0.61,
+    "data_used": [
+      "12 weeks of CGM",
+      "pump log",
+      "workout history",
+      "sleep"
+    ],
+    "data_missing": [
+      "how well you actually sleep when you get up at 05:45"
+    ],
+    "top_factors": [
+      "Morning workouts remove the post-lunch insulin stack",
+      "Fridays stay in the evening because that is when you drink"
+    ]
+  },
+  "safety": {
+    "status": "ok",
+    "reason": "",
+    "needed": [],
+    "rule_id": null
+  }
+}

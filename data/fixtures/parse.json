@@ -1,0 +1,26 @@
+{
+  "event": {
+    "type": "alcohol",
+    "t_start": "2026-09-11T22:30:00",
+    "duration_min": 0.0,
+    "source": "text",
+    "uncertainty": 0.25,
+    "label": "2 IPAs",
+    "carbs_g": 0.0,
+    "fat_g": 0.0,
+    "protein_g": 0.0,
+    "fiber_g": 0.0,
+    "units": 0.0,
+    "insulin_kind": null,
+    "ethanol_g": 28.0,
+    "caffeine_mg": 0.0,
+    "water_ml": 0.0,
+    "intensity": 0.0,
+    "exercise_kind": null,
+    "sleep_quality": 1.0,
+    "severity": 0.0
+  },
+  "confidence": 0.81,
+  "question_type": "permission",
+  "raw": "can I have two IPAs tonight?"
+}

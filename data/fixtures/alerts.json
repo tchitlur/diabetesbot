@@ -1,0 +1,31 @@
+{
+  "alerts": [
+    {
+      "t_start": "2026-09-12T04:00:00",
+      "t_end": "2026-09-12T07:30:00",
+      "kind": "low",
+      "probability": 0.38,
+      "cause": "Alcohol at 22:30 suppressing overnight liver glucose output"
+    },
+    {
+      "t_start": "2026-09-11T20:00:00",
+      "t_end": "2026-09-11T21:30:00",
+      "kind": "high",
+      "probability": 0.22,
+      "cause": "High-fat dinner absorbing later than the bolus covers"
+    },
+    {
+      "t_start": "2026-09-11T07:00:00",
+      "t_end": "2026-09-12T09:00:00",
+      "kind": "drift",
+      "probability": 0.12,
+      "cause": "Morning predictions running 18 mg/dL low for 2 days"
+    }
+  ],
+  "safety": {
+    "status": "ok",
+    "reason": "",
+    "needed": [],
+    "rule_id": null
+  }
+}

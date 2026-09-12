@@ -1,0 +1,25 @@
+rules:
+  - id: no_exercise_below_90
+    when: "state.G < 90 and proposed.type == 'exercise'"
+    action: deny
+    message: "Glucose below 90 mg/dL: no exercise until above 100 with a snack."
+  - id: no_alcohol_with_ketones
+    when: "state.ket > 0.6 and proposed.type == 'alcohol'"
+    action: deny
+    message: "Ketones elevated: alcohol not approved."
+  - id: stale_cgm
+    when: "glucose_age_min > 20"
+    action: need_data
+    message: "Need a CGM reading from the last 20 minutes."
+  - id: escalate_dka_pattern
+    when: "state.ket > 1.5 and state.G > 250"
+    action: escalate
+    message: "High ketones with high glucose. Contact your clinician now; do not exercise."
+  - id: escalate_repeated_severe_lows
+    when: "severe_lows_7d >= 3"
+    action: escalate
+    message: "Three or more severe lows this week. This needs clinical review."
+  - id: escalate_drift
+    when: "drift_score > 1.0"
+    action: escalate
+    message: "Model no longer matches your readings for 3+ days; possible illness or insulin change."

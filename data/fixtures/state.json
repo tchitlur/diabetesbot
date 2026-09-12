@@ -1,0 +1,63 @@
+{
+  "t": "2026-09-11T22:45:00",
+  "glucose_now": 117.7,
+  "glucose_age_min": 4.0,
+  "estimated": {
+    "G": 117.745,
+    "I_p": 5.948,
+    "D1": 0.094,
+    "D2": 0.632,
+    "gly_liver": 80.0,
+    "gly_muscle": 350.0,
+    "BAC": 0.036,
+    "caf": 0.0,
+    "ket": 0.1,
+    "hyd": 1.0,
+    "ex": 0.082
+  },
+  "estimated_sd": {
+    "G": 8.0,
+    "I_p": 2.5,
+    "D1": 4.0,
+    "D2": 4.0,
+    "gly_liver": 6.0,
+    "gly_muscle": 20.0,
+    "BAC": 0.004,
+    "caf": 12.0,
+    "ket": 0.05,
+    "hyd": 0.03,
+    "ex": 0.08
+  },
+  "energy_score": 81.7,
+  "active": [
+    {
+      "name": "insulin",
+      "remaining_pct": 22.0,
+      "ends_at": "2026-09-12T00:00:00"
+    },
+    {
+      "name": "carbs",
+      "remaining_pct": 14.0,
+      "ends_at": "2026-09-11T23:30:00"
+    },
+    {
+      "name": "alcohol",
+      "remaining_pct": 88.0,
+      "ends_at": "2026-09-12T08:00:00"
+    }
+  ],
+  "daily": {
+    "sleep_debt_h": 1.4,
+    "si_mult": 0.92,
+    "training_load": 180.0,
+    "fat_mass_kg": 15.5,
+    "lean_mass_kg": 56.0,
+    "hba1c_pct": 7.1
+  },
+  "safety": {
+    "status": "ok",
+    "reason": "",
+    "needed": [],
+    "rule_id": null
+  }
+}

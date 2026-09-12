@@ -1,0 +1,16 @@
+numpy
+scipy
+pandas
+pydantic>=2
+fastapi
+uvicorn
+python-multipart
+lightgbm
+pyyaml
+pyarrow
+pytest
+httpx
+filterpy
+matplotlib
+anthropic
+python-dotenv

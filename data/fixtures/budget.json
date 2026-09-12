@@ -1,0 +1,22 @@
+{
+  "weekly": {
+    "alcohol_drinks": 6.0,
+    "caffeine_mg": 1400.0,
+    "offplan_meals": 3.0
+  },
+  "risk_tolerance": 0.01,
+  "explanation": {
+    "confidence": 0.55,
+    "data_used": [
+      "10 y simulation",
+      "12 weeks of CGM"
+    ],
+    "data_missing": [
+      "liver panel"
+    ],
+    "top_factors": [
+      "6 drinks/week keeps the 10 y liver and cardio increase under 1 point",
+      "Caffeine after 14:00 costs you more in sleep debt than it returns in energy"
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+data/synthetic/*
+!data/synthetic/.gitkeep
+!data/synthetic/patient_01/
+data/validation/*.png
+__pycache__
+.venv
+node_modules
+web/dist
+*.pkl
+*.npz
+.env
