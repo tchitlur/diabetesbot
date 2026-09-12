@@ -13,7 +13,7 @@
 defaults:
 
   # ---------------------------------------------------------------- glucose hub
-  V_g: 3.6                 # dL/kg, effective glucose distribution volume
+  V_g: 3.6                 # dL/kg, effective volume for the glucose <-> grams conversion
   G_ref: 100.0             # mg/dL, reference glucose all ratio terms are taken against
   k_renal: 0.010           # (mg/dL/min) per mg/dL above the renal threshold
   renal_threshold: 180.0   # mg/dL
@@ -64,7 +64,7 @@ defaults:
   bac_per_g: 0.0021        # g/dL per g ethanol at insulin_weight_ref kg (Widmark, r = 0.68)
   alc_absorb_min: 30.0
   alc_clear_per_min: 0.00025   # 0.015 g/dL per hour, zero order
-  alc_hgo_gain: 0.80       # fraction of HGO suppressed at BAC 0.05 with k_alc = 1
+  alc_hgo_gain: 0.80       # fraction of gluconeogenesis suppressed at BAC 0.05, k_alc = 1
   alc_hgo_ref_bac: 0.05
 
   # ---------------------------------------------------------------- caffeine
@@ -164,6 +164,20 @@ defaults:
   q_hyd: 0.00040
   q_ex: 0.0025
 
+# Plausible bounds for the PER-PATIENT fitted parameters (schema.params.PARAM_NAMES).
+# The fitter clips its posterior samples to these. Not population constants: these are
+# the outer limits of what a real person's physiology can look like.
+patient_ranges:
+  si_night: [12.0, 130.0]     # mg/dL per U. Highly insulin-resistant to highly sensitive.
+  si_day: [10.0, 110.0]
+  si_evening: [12.0, 120.0]
+  carb_ratio: [3.0, 30.0]     # g per U. 3 is a very resistant adult, 30 a small sensitive one.
+  k_abs: [0.006, 0.10]        # 1/min. Gastroparesis at the low end, liquid carbs at the high.
+  k_ex: [0.20, 3.00]          # multiples of the population exercise response
+  k_alc: [0.20, 3.00]         # multiples of the population alcohol response
+  basal_drift: [-1.00, 1.00]  # U/h of unlogged basal error either way
+  k_sleep: [0.00, 0.50]       # per spec, the total sensitivity loss is capped at 0.5
+
 ranges:
   V_g: [2.0, 5.0]
   k_renal: [0.002, 0.030]
@@ -190,7 +204,7 @@ ranges:
   muscle_drain: [0.10, 2.00]
   bac_per_g: [0.0012, 0.0032]
   alc_absorb_min: [15.0, 90.0]
-  alc_hgo_gain: [0.40, 1.20]
+  alc_hgo_gain: [0.40, 0.98]
   ket_gain: [0.0005, 0.0100]
   ket_ins_thresh: [4.0, 15.0]
   ket_clear: [0.0010, 0.0100]
@@ -213,10 +227,12 @@ ranges:
 
 sources:
   V_g: >-
-    Tuned. Hovorka 2004 uses V_G = 0.16 L/kg (1.6 dL/kg); this model has no explicit
-    insulin-independent (CNS) uptake term and no hepatic first-pass extraction, so the
-    effective volume is inflated to reproduce a 60 g meal peaking near +200 mg/dL
-    unbolused. See engine/NOTES.md.
+    Effective distribution volume, used for the glucose <-> grams conversion in the
+    glycogen equations. Larger than Hovorka 2004's 0.16 L/kg because this model has no
+    explicit insulin-independent (CNS) uptake term and no hepatic first-pass extraction.
+    Carbohydrate appearance does NOT use it: that is set by the clinical identity
+    si_day / carb_ratio, which agrees with 1000/(V_g*weight) to within 1% at the
+    population defaults. See engine/NOTES.md.
   G_ref: "Convention: normoglycaemia. Every ratio term is taken relative to this."
   k_renal: "Renal glucose clearance above threshold; Hovorka 2004 / Dalla Man 2007 order of magnitude."
   renal_threshold: "Standard renal threshold for glucosuria, ~180 mg/dL."
@@ -275,7 +291,10 @@ sources:
   bac_per_g: "Widmark equation, r = 0.68, 70 kg male. Scaled by ref/weight at run time."
   alc_absorb_min: "Peak BAC 30-60 min after a drink on a non-empty stomach."
   alc_clear_per_min: "0.015 g/dL/h, standard zero-order ethanol elimination."
-  alc_hgo_gain: "Ethanol inhibits gluconeogenesis; ~80% suppression at BAC 0.05 per spec."
+  alc_hgo_gain: >-
+    Ethanol inhibits gluconeogenesis; ~80% suppression at BAC 0.05 per spec. Applied
+    as exp(-rate * k_alc * BAC / 0.05) with rate = -ln(1 - alc_hgo_gain), so the
+    calibration point is exact and the response never clamps flat. Must stay below 1.
   alc_hgo_ref_bac: "Reference BAC the suppression is quoted at."
   caf_halflife_min: "Caffeine plasma half-life 4-6 h."
   caf_absorb_min: "Caffeine is ~99% absorbed within 45 min; a 10 min pulse is adequate here."

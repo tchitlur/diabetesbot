@@ -200,8 +200,14 @@ def _make_rhs(inp: InputSchedule, params: PatientParams, cfg: dict, daily: Daily
     bp, vals = inp.bp, inp.vals
 
     V_dL = cfg["V_g"] * weight_kg
-    g_to_mgdL = 1000.0 / V_dL
     mgdL_to_g = V_dL / 1000.0
+    # Glucose appearance per gram of carbohydrate. The clinical identity behind the
+    # "500 rule": one unit covers carb_ratio grams and drops glucose by si_day mg/dL,
+    # so a gram must raise it by si_day / carb_ratio. Using this rather than the raw
+    # 1000/(V_g*weight) volume conversion is what makes carb_ratio identifiable from
+    # CGM at all - nothing else in the model reads it. At the population defaults the
+    # two agree to within 1% (4.00 vs 3.97 mg/dL per gram). See NOTES.md.
+    g_to_mgdL = params.si_day / params.carb_ratio if params.carb_ratio > 0 else 1000.0 / V_dL
     G_ref = cfg["G_ref"]
     k_renal = cfg["k_renal"]
     renal_thr = cfg["renal_threshold"]
@@ -236,7 +242,7 @@ def _make_rhs(inp: InputSchedule, params: PatientParams, cfg: dict, daily: Daily
     m_drain = cfg["muscle_drain"]
 
     alc_clear = cfg["alc_clear_per_min"]
-    alc_gain = cfg["alc_hgo_gain"]
+    alc_rate = -math.log(max(1.0 - cfg["alc_hgo_gain"], 1e-3))
     alc_ref = cfg["alc_hgo_ref_bac"]
 
     caf_decay = LN2 / cfg["caf_halflife_min"]
@@ -302,9 +308,12 @@ def _make_rhs(inp: InputSchedule, params: PatientParams, cfg: dict, daily: Daily
         gly_frac = gly_l / gly_nominal
         if gly_frac > 1.0:
             gly_frac = 1.0
-        alc_factor = 1.0 - alc_gain * k_alc * BAC / alc_ref
-        if alc_factor < 0.0:
-            alc_factor = 0.0
+        # Exponential rather than linear-and-clamped. A hard clamp at zero means every
+        # k_alc above ~0.7 produces an identical trajectory at drinking-night BAC, which
+        # makes the parameter unfittable; it also claims gluconeogenesis stops dead.
+        # alc_rate is set so that BAC 0.05 at k_alc = 1 still suppresses alc_hgo_gain
+        # of hepatic gluconeogenesis, exactly as specified.
+        alc_factor = math.exp(-alc_rate * k_alc * BAC / alc_ref) if BAC > 0.0 else 1.0
         counter_reg = (G_ref / G_safe) ** hgo_exp
         # Hepatic autoregulation: gluconeogenesis makes up whatever glycogenolysis
         # cannot supply, so total output is preserved as the store empties. Ethanol
