@@ -1,0 +1,426 @@
+# GlucoPilot population constants.
+#
+# Every number the engine uses lives here. engine/simulate.py contains no magic
+# numbers: it loads this file once at import and reads `defaults`.
+#
+#   defaults  name -> value          (what the engine uses)
+#   ranges    name -> [min, max]     plausible bounds, used by engine/tune.py
+#   sources   name -> provenance     (paper, textbook, or what it was tuned to)
+#
+# Units are minutes, mg/dL, grams, mU/L, g/dL (BAC), kcal, kg.
+# Per-PATIENT fitted parameters are NOT here - they live in schema/params.py.
+
+defaults:
+
+  # ---------------------------------------------------------------- glucose hub
+  V_g: 3.6                 # dL/kg, effective volume for the glucose <-> grams conversion
+  G_ref: 100.0             # mg/dL, reference glucose all ratio terms are taken against
+  k_renal: 0.010           # (mg/dL/min) per mg/dL above the renal threshold
+  renal_threshold: 180.0   # mg/dL
+  G_clip_low: 30.0
+  G_clip_high: 500.0
+
+  # ---------------------------------------------------------------- hepatic output
+  HGO_base: 0.667          # mg/dL/min at G_ref with a full liver and basal insulin
+  hgo_G_exp: 2.0           # HGO scales as (G_ref/G)^hgo_G_exp - counter-regulation
+  glycogenolysis_share: 0.70   # share of hepatic output from glycogenolysis at a nominal store
+  gly_nominal: 45.0        # hepatic glycogen above which glycogenolysis is unconstrained
+
+  # ---------------------------------------------------------------- insulin
+  k_ins: 0.010             # 1/min plasma insulin clearance (t1/2 ~ 69 min)
+  k_u2mUL: 6.0             # mU/L of plasma insulin per Unit delivered, at 70 kg
+  k_si: 0.0016667          # = k_ins / k_u2mUL; converts si_* (mg/dL per U) to a rate
+  bolus_ramp_min: 80.0     # subcutaneous bolus delivered over a rising ramp
+  bolus_ramp_steps: 3      # ramp discretisation (piecewise-constant sub-intervals)
+  insulin_weight_ref: 70.0 # kg that k_u2mUL is quoted at; scaled by ref/weight
+
+  # ---------------------------------------------------------------- gut carbohydrate
+  carb_pulse_min: 10.0     # meal carbs enter D1 as a square pulse of this width
+  fat_slowdown: 0.60       # k_abs multiplier loss at fat_frac = 1
+  fiber_slowdown: 0.40     # k_abs multiplier loss at fiber_frac = 1
+  k_abs_floor_frac: 0.30   # k_abs_eff never below this fraction of params.k_abs
+
+  # ---------------------------------------------------------------- SI modifiers
+  caf_si_drop: 0.25        # fractional SI loss at caf_ref_mg on board
+  caf_ref_mg: 200.0
+  ex_si_gain: 0.30         # fractional SI gain at ex = 1
+  illness_si_drop: 0.30    # fractional SI loss at severity = 1
+
+  # ---------------------------------------------------------------- exercise
+  ex_uptake_gain: 0.90     # mg/dL/min extra uptake at intensity 1, G = G_ref, k_ex = 1
+  adrenaline_gain: 3.00    # mg/dL/min added at intensity 1 for anaerobic/mixed work
+  ex_rise: 0.020           # 1/min rise of the residual exercise effect at intensity 1
+  ex_halflife_min: 240.0
+
+  # ---------------------------------------------------------------- glycogen
+  gly_liver_full: 100.0
+  gly_muscle_full: 400.0
+  refill_gain: 0.45        # g of liver glycogen stored per g of glucose appearing
+  fast_drain: 0.010        # g/min baseline liver glycogen turnover
+  muscle_refill: 0.30      # g of muscle glycogen stored per g of glucose appearing
+  muscle_drain: 0.60       # g/min of muscle glycogen burnt at intensity 1
+
+  # ---------------------------------------------------------------- alcohol
+  bac_per_g: 0.0021        # g/dL per g ethanol at insulin_weight_ref kg (Widmark, r = 0.68)
+  alc_absorb_min: 30.0
+  alc_clear_per_min: 0.00025   # 0.015 g/dL per hour, zero order
+  alc_hgo_gain: 0.90       # fraction of gluconeogenesis suppressed at BAC 0.05, k_alc = 1
+  alc_hgo_ref_bac: 0.05
+
+  # ---------------------------------------------------------------- caffeine
+  caf_halflife_min: 300.0
+  caf_absorb_min: 10.0
+
+  # ---------------------------------------------------------------- ketones
+  ket_gain: 0.0030         # mmol/L/min at zero insulin and an empty liver
+  ket_ins_thresh: 8.0      # mU/L below which ketogenesis switches on
+  ket_clear: 0.0040        # 1/min
+  sglt2_ket_mult: 2.5      # SGLT2 inhibitors raise euglycaemic ketosis risk
+
+  # ---------------------------------------------------------------- hydration
+  hyd_loss_G: 0.0000060    # per min per mg/dL above the renal threshold
+  hyd_loss_alc: 0.0020     # per min per g/dL BAC
+  hyd_gain_water: 0.00040  # hydration fraction per mL absorbed
+  hyd_recover: 0.00060     # 1/min pull back toward 1.0
+  water_absorb_min: 20.0
+  hyd_clip_low: 0.60
+  hyd_clip_high: 1.00
+
+  # ---------------------------------------------------------------- daily (medium) layer
+  sleep_debt_decay: 0.35   # fraction of accumulated debt cleared per day
+  sleep_debt_cap: 20.0
+  train_si_gain: 0.15      # SI gain at training_load = train_load_ref
+  train_load_ref: 300.0
+  train_decay_days: 7.0
+  cycle_low_factor: 0.90   # luteal-phase SI multiplier
+  cycle_len_days: 28
+  cycle_low_start: 15
+  cycle_low_end: 28
+  kcal_per_g_carb: 4.0
+  kcal_per_g_protein: 4.0
+  kcal_per_g_fat: 9.0
+  kcal_per_g_ethanol: 7.0
+  kcal_per_kg_fat: 7700.0
+  ex_kcal_per_min: 5.0     # at intensity 1 and 70 kg
+  protein_g_per_kg_lean: 1.2
+  lean_partition: 0.20     # fraction of surplus going to lean when protein is adequate
+  hba1c_slope: 0.0296      # HbA1c %% per mg/dL of mean glucose (Nathan 2008)
+  hba1c_intercept: 2.42
+  hba1c_clear_days: 120.0
+
+  # ---------------------------------------------------------------- slow (organ) layer
+  organ_G_threshold: 140.0 # mg/dL above which glycaemic damage accrues
+  k_eye: 4.31243e-05
+  var_gain: 0.50
+  k_kidney: 6.0875e-05
+  bp_gain: 0.80
+  dehyd_gain: 40.0
+  k_nerve: 6.24097e-05
+  alc_nerve_gain: 0.055
+  k_cardio: 6.10993e-05
+  fat_gain: 120.0
+  alc_cardio_gain: 0.030
+  sleep_gain: 1.20
+  k_liver: 0.000208125
+  alc_liver_gain: 0.220
+  fat_liver_gain: 150.0
+  body_fat_ref: 0.25       # fat mass fraction above which cardio/liver damage accrues
+
+  # risk10[organ] = 1 - exp(-baseline_hazard * exp(beta * damage_10y))
+  baseline_hazard_eye: 0.0404114
+  baseline_hazard_kidney: 0.0480402
+  baseline_hazard_nerve: 0.0551761
+  baseline_hazard_cardio: 0.063023
+  baseline_hazard_liver: 0.0112053
+  beta_eye: 1.15161
+  beta_kidney: 0.55139
+  beta_nerve: 0.646858
+  beta_cardio: 0.403094
+  beta_liver: 1
+
+  # ---------------------------------------------------------------- long-horizon solver
+  long_week_dt_min: 5
+  long_resim_tol: 0.05     # re-simulate the week when si_mult or body mass moves > 5%
+  long_max_resim: 20
+  hypo_episode_min: 15.0   # minutes below threshold that count as one hypo episode
+  hypo_threshold: 70.0
+  tir_low: 70.0
+  tir_high: 180.0
+
+  # ---------------------------------------------------------------- state estimator (UKF)
+  ukf_meas_sd: 10.0        # CGM measurement noise, mg/dL
+  ukf_window_h: 6.0
+  ukf_alpha: 0.10
+  ukf_beta: 2.0
+  ukf_kappa: 0.0
+  ukf_p0_mult: 25.0        # initial covariance as a multiple of the per-step process noise
+  ukf_jitter: 1.0e-9       # added to the diagonal to keep the covariance factorable
+  q_G: 4.0                 # process noise variances, per 5-minute step
+  q_I_p: 0.50
+  q_D1: 9.0
+  q_D2: 9.0
+  q_gly_liver: 4.0
+  q_gly_muscle: 4.0
+  q_BAC: 0.0000040
+  q_caf: 25.0
+  q_ket: 0.0025
+  q_hyd: 0.00040
+  q_ex: 0.0025
+
+# Plausible bounds for the PER-PATIENT fitted parameters (schema.params.PARAM_NAMES).
+# The fitter clips its posterior samples to these. Not population constants: these are
+# the outer limits of what a real person's physiology can look like.
+# Calibration targets for the slow layer. engine/calibrate_risk.py reads these, works
+# out the k_<organ> / baseline_hazard_<organ> / beta_<organ> constants that reproduce
+# them, and writes those back into `defaults` above.
+risk_targets:
+  mean_G_reference: 154.0   # HbA1c 7.0 on the Nathan 2008 line
+  mean_G_high: 222.0        # HbA1c 9.0
+  weekly_ethanol_g: 42.0    # three standard drinks; the reference patient is not teetotal
+  risk10:                   # ten-year probabilities for the reference patient
+    eye: 0.12
+    kidney: 0.08
+    nerve: 0.10
+    cardio: 0.09
+    liver: 0.03
+  high_risk_ratio:          # risk at HbA1c 9.0 as a multiple of the reference
+    eye: 4.0
+    kidney: 3.0
+    nerve: 3.0
+    cardio: 2.0
+    liver: 1.2
+  sources:
+    risk10: >-
+      DCCT/EDIC and UKPDS ten-year complication rates for a type 1 patient held near
+      HbA1c 7.0. Handed down as the calibration targets in the project specification.
+    high_risk_ratio: >-
+      DCCT: intensive therapy (HbA1c ~7) versus conventional (~9) cut retinopathy by
+      70-80%, i.e. a risk ratio of 3.3-5 the other way. Nephropathy and neuropathy
+      responded somewhat less steeply, cardiovascular risk less again, and liver damage
+      in this model is alcohol-driven rather than glycaemic, so it barely moves.
+    mean_G_reference: "Nathan 2008 (ADAG): HbA1c 7.0 corresponds to mean glucose 154 mg/dL."
+    mean_G_high: "Nathan 2008 (ADAG): HbA1c 9.0 corresponds to mean glucose 222 mg/dL."
+
+patient_ranges:
+  si_night: [12.0, 130.0]     # mg/dL per U. Highly insulin-resistant to highly sensitive.
+  si_day: [10.0, 110.0]
+  si_evening: [12.0, 120.0]
+  carb_ratio: [3.0, 30.0]     # g per U. 3 is a very resistant adult, 30 a small sensitive one.
+  k_abs: [0.006, 0.10]        # 1/min. Gastroparesis at the low end, liquid carbs at the high.
+  k_ex: [0.20, 3.00]          # multiples of the population exercise response
+  k_alc: [0.20, 3.00]         # multiples of the population alcohol response
+  basal_drift: [-1.00, 1.00]  # U/h of unlogged basal error either way
+  k_sleep: [0.00, 0.50]       # per spec, the total sensitivity loss is capped at 0.5
+
+ranges:
+  V_g: [2.0, 5.0]
+  k_renal: [0.002, 0.030]
+  HGO_base: [0.30, 1.40]
+  hgo_G_exp: [1.0, 3.5]
+  k_ins: [0.005, 0.020]
+  k_u2mUL: [3.0, 12.0]
+  bolus_ramp_min: [15.0, 90.0]
+  carb_pulse_min: [5.0, 20.0]
+  fat_slowdown: [0.0, 0.9]
+  fiber_slowdown: [0.0, 0.9]
+  caf_si_drop: [0.0, 0.30]
+  ex_si_gain: [0.10, 0.60]
+  illness_si_drop: [0.10, 0.60]
+  ex_uptake_gain: [0.30, 2.00]
+  adrenaline_gain: [0.50, 4.00]
+  ex_rise: [0.005, 0.060]
+  ex_halflife_min: [120.0, 480.0]
+  glycogenolysis_share: [0.40, 0.90]
+  gly_nominal: [40.0, 100.0]
+  refill_gain: [0.05, 0.60]
+  fast_drain: [0.0, 0.05]
+  muscle_refill: [0.05, 0.80]
+  muscle_drain: [0.10, 2.00]
+  bac_per_g: [0.0012, 0.0032]
+  alc_absorb_min: [15.0, 90.0]
+  alc_hgo_gain: [0.40, 0.98]
+  ket_gain: [0.0005, 0.0100]
+  ket_ins_thresh: [4.0, 15.0]
+  ket_clear: [0.0010, 0.0100]
+  hyd_loss_G: [0.0, 0.00002]
+  hyd_loss_alc: [0.0, 0.010]
+  hyd_recover: [0.0001, 0.0030]
+  sleep_debt_decay: [0.10, 0.70]
+  train_si_gain: [0.05, 0.35]
+  hba1c_slope: [0.020, 0.040]
+  hba1c_intercept: [1.5, 3.5]
+  k_eye: [0.0003, 0.0030]
+  k_kidney: [0.0002, 0.0020]
+  k_nerve: [0.0003, 0.0025]
+  k_cardio: [0.0002, 0.0020]
+  k_liver: [0.00005, 0.0010]
+  beta_eye: [0.5, 2.5]
+  beta_kidney: [0.5, 2.5]
+  beta_nerve: [0.5, 2.5]
+  beta_cardio: [0.5, 2.5]
+  beta_liver: [0.5, 2.5]
+
+sources:
+  V_g: >-
+    Effective distribution volume, used for the glucose <-> grams conversion in the
+    glycogen equations. Larger than Hovorka 2004's 0.16 L/kg because this model has no
+    explicit insulin-independent (CNS) uptake term and no hepatic first-pass extraction.
+    Carbohydrate appearance does NOT use it: that is set by the clinical identity
+    si_day / carb_ratio, which agrees with 1000/(V_g*weight) to within 1% at the
+    population defaults. See engine/NOTES.md.
+  G_ref: "Convention: normoglycaemia. Every ratio term is taken relative to this."
+  k_renal: "Renal glucose clearance above threshold; Hovorka 2004 / Dalla Man 2007 order of magnitude."
+  renal_threshold: "Standard renal threshold for glucosuria, ~180 mg/dL."
+  G_clip_low: "Physiological floor; below this the patient is unconscious, not simulated."
+  G_clip_high: "Physiological ceiling for a conscious patient."
+  HGO_base: >-
+    Derived, not measured: the value that balances SI_eff * I_p at G_ref with basal
+    insulin 10 mU/L and population si_day = 40 mg/dL/U.
+  hgo_G_exp: "Tuned so counter-regulation arrests a hypo without producing a rebound spike."
+  k_ins: "Rapid-acting analogue effective action t1/2 ~70 min, duration 4-5 h (aspart/lispro PK)."
+  k_u2mUL: >-
+    Derived so that basal 1 U/h holds plasma insulin at 10 mU/L, matching
+    schema.state.default_fast.
+  k_si: >-
+    Identity k_ins / k_u2mUL. Makes one unit of bolus lower glucose by exactly
+    params.si_* mg/dL in the absence of counter-regulation.
+  bolus_ramp_min: >-
+    Plasma insulin peaks 50-90 min after a subcutaneous rapid-acting analogue dose
+    (aspart/lispro PK). This model has a single insulin compartment, so the delay
+    is carried by the input ramp rather than by a second compartment.
+  bolus_ramp_steps: >-
+    Discretisation only. Each sub-interval is an integration segment, so 3 buys
+    most of the ramp shape at half the solver restarts of 5.
+  insulin_weight_ref: "Reference adult mass for the insulin and alcohol volume scalings."
+  carb_pulse_min: >-
+    Gastric delivery of a normal-sized meal; Hovorka 2004 uses an impulse, a 10 min
+    pulse is gentler on the integrator.
+  fat_slowdown: "Wolpert 2013: high-fat meals delay and prolong glucose appearance."
+  fiber_slowdown: "Standard glycaemic-index effect of soluble fibre."
+  k_abs_floor_frac: "Even the fattiest meal eventually absorbs; per spec."
+  caf_si_drop: >-
+    Lane 2004 / Lane 2008: 200-250 mg caffeine raises postprandial glucose 8-25%.
+    Tuned to the upper half of that band to satisfy the smoke-test window.
+  caf_ref_mg: "One strong coffee."
+  ex_si_gain: "Post-exercise insulin sensitivity rises ~30-50% for hours (Richter & Hargreaves 2013)."
+  illness_si_drop: "Sick-day guidance: insulin requirements rise 20-40% with intercurrent illness."
+  ex_uptake_gain: "Tuned so 45 min of moderate aerobic work drops glucose 40-80 mg/dL."
+  adrenaline_gain: "Tuned to the documented transient rise with anaerobic / HIIT work."
+  ex_rise: "Tuned so ex approaches ~0.6 by the end of a 45 min session."
+  ex_halflife_min: "Residual insulin sensitisation decays over hours; 4 h half-life per spec."
+  gly_liver_full: "~100 g hepatic glycogen in an adult (Nilsson & Hultman 1973)."
+  glycogenolysis_share: >-
+    Rothman 1991 / Landau 1996: glycogenolysis supplies roughly two thirds of hepatic
+    glucose output in the post-absorptive state, falling as the store empties.
+    Gluconeogenesis makes up the remainder (hepatic autoregulation), which is why a
+    fasting patient does not simply drift down. Ethanol inhibits only that branch.
+  gly_nominal: >-
+    Hepatic glycogen in the rested, fed state, and the value schema.state.default_fast
+    starts from. gly_factor is 1 here, so basal insulin and basal hepatic output balance
+    exactly at G_ref in the nominal state.
+  gly_muscle_full: "~400 g skeletal muscle glycogen in an adult."
+  refill_gain: "Splanchnic uptake stores roughly a quarter of an oral glucose load."
+  fast_drain: "Overnight hepatic glycogen turnover, ~15 g per 24 h."
+  muscle_refill: "Muscle takes up a larger share of an oral load than liver."
+  muscle_drain: "~0.6 g/min glycogen use at high intensity."
+  bac_per_g: "Widmark equation, r = 0.68, 70 kg male. Scaled by ref/weight at run time."
+  alc_absorb_min: "Peak BAC 30-60 min after a drink on a non-empty stomach."
+  alc_clear_per_min: "0.015 g/dL/h, standard zero-order ethanol elimination."
+  alc_hgo_gain: >-
+    Ethanol inhibits gluconeogenesis. The spec says ~80% at BAC 0.05; raised to 90%
+    because the exponential form below has a softer tail than the linear-and-clamped
+    one it replaced, and 80% no longer produced the specified 30 mg/dL overnight
+    gap in the alcohol smoke test. Applied
+    as exp(-rate * k_alc * BAC / 0.05) with rate = -ln(1 - alc_hgo_gain), so the
+    calibration point is exact and the response never clamps flat. Must stay below 1.
+  alc_hgo_ref_bac: "Reference BAC the suppression is quoted at."
+  caf_halflife_min: "Caffeine plasma half-life 4-6 h."
+  caf_absorb_min: "Caffeine is ~99% absorbed within 45 min; a 10 min pulse is adequate here."
+  ket_gain: "Tuned so a full basal failure reaches DKA-range ketones (>3 mmol/L) in ~8 h."
+  ket_ins_thresh: "Ketogenesis is suppressed by modest portal insulin."
+  ket_clear: "Ketone half-life of a few hours once insulin is restored."
+  sglt2_ket_mult: "SGLT2 inhibitors carry a documented euglycaemic-DKA risk."
+  hyd_loss_G: "Osmotic diuresis above the renal threshold."
+  hyd_loss_alc: "Ethanol suppresses vasopressin."
+  hyd_gain_water: "500 mL restores roughly 20% of a mild deficit."
+  hyd_recover: "Ad-lib drinking and renal conservation pull hydration back over hours."
+  water_absorb_min: "Gastric emptying of a glass of water."
+  hyd_clip_low: "Below 0.6 of euhydration is a medical emergency, outside this model."
+  hyd_clip_high: "Euhydration is the ceiling; overhydration is not modelled."
+  sleep_debt_decay: "Tuned: a normal night clears about a third of accumulated debt."
+  sleep_debt_cap: "Sanity bound so a long gap in sleep logging cannot explode si_mult."
+  train_si_gain: "Chronic training raises insulin sensitivity 10-20%."
+  train_load_ref: "Roughly 5 h per week of moderate work."
+  train_decay_days: "7 day exponential, the standard training-load convention."
+  cycle_low_factor: "Luteal-phase insulin resistance, ~10% (Trout 2007)."
+  cycle_len_days: "Nominal 28 day cycle."
+  cycle_low_start: "Luteal phase begins around day 15."
+  cycle_low_end: "Luteal phase runs to the end of the cycle."
+  kcal_per_g_carb: "Atwater factors."
+  kcal_per_g_protein: "Atwater factors."
+  kcal_per_g_fat: "Atwater factors."
+  kcal_per_g_ethanol: "Atwater factor for ethanol."
+  kcal_per_kg_fat: "Standard 7700 kcal per kg of adipose tissue."
+  ex_kcal_per_min: "~5 kcal/min at moderate intensity for a 70 kg adult."
+  protein_g_per_kg_lean: "Threshold above which surplus partitions toward lean mass."
+  lean_partition: "Per spec: 20% of surplus goes to lean when protein intake is adequate."
+  hba1c_slope: >-
+    Nathan 2008 (ADAG): HbA1c = 0.0296 * mean glucose + 2.42 at steady state.
+    HbA1c relaxes toward that line with the red-cell time constant below.
+  hba1c_intercept: "Nathan 2008 (ADAG) intercept."
+  hba1c_clear_days: "Red cell lifespan ~120 days."
+  organ_G_threshold: "DCCT / UKPDS: complication hazard rises steeply above roughly this mean."
+  k_eye: "Calibrated with baseline_hazard_eye and beta_eye to the DCCT 10 y targets below."
+  var_gain: "Glycaemic variability contributes to retinopathy independently of the mean."
+  k_kidney: "Calibrated to the 10 y nephropathy target."
+  bp_gain: "UKPDS: systolic BP above 130 mmHg is an independent renal risk factor."
+  dehyd_gain: "Chronic volume depletion accelerates renal decline."
+  k_nerve: "Calibrated to the 10 y neuropathy target."
+  alc_nerve_gain: "Alcohol is an independent cause of peripheral neuropathy."
+  k_cardio: "Calibrated to the 10 y cardiovascular target."
+  fat_gain: "Adiposity above ~25% body fat raises cardiometabolic risk."
+  alc_cardio_gain: "Net cardiovascular effect of alcohol above moderate intake."
+  sleep_gain: "Chronic short sleep raises cardiovascular risk."
+  k_liver: "Calibrated to the 10 y liver target."
+  alc_liver_gain: "Dominant driver of hepatic damage in this model."
+  fat_liver_gain: "Hepatic steatosis with adiposity."
+  body_fat_ref: "Body fat fraction above which cardiometabolic damage begins to accrue."
+  baseline_hazard_eye: >-
+    Calibrated: an HbA1c 7.0 patient reaches 0.12 over 10 y (DCCT conventional vs
+    intensive arms).
+  baseline_hazard_kidney: "Calibrated to 0.08 over 10 y at HbA1c 7.0."
+  baseline_hazard_nerve: "Calibrated to 0.10 over 10 y at HbA1c 7.0."
+  baseline_hazard_cardio: "Calibrated to 0.09 over 10 y at HbA1c 7.0."
+  baseline_hazard_liver: "Calibrated to 0.03 over 10 y at HbA1c 7.0."
+  beta_eye: "Calibrated so HbA1c 9.0 vs 7.0 gives a 3.3-5x retinopathy risk ratio (DCCT)."
+  beta_kidney: "Same family as beta_eye, slightly shallower."
+  beta_nerve: "Same family as beta_eye, slightly shallower."
+  beta_cardio: "Cardiovascular risk is less glycaemia-dominated than microvascular risk."
+  beta_liver: "Liver damage here is alcohol-dominated, so the glycaemic slope is shallowest."
+  long_week_dt_min: "One representative week at CGM resolution."
+  long_resim_tol: "Per spec: re-simulate when si_mult or body mass moves more than 5%."
+  long_max_resim: "Per spec: bounds a simulate_long call to ~20 fast simulations."
+  hypo_episode_min: "International consensus: 15 min below 70 mg/dL is one event."
+  hypo_threshold: "International consensus level 1 hypoglycaemia."
+  tir_low: "Consensus time-in-range lower bound."
+  tir_high: "Consensus time-in-range upper bound."
+  ukf_meas_sd: "Dexcom G6/G7 MARD ~9%, roughly 10 mg/dL at euglycaemia."
+  ukf_window_h: "Six hours covers one full meal-plus-bolus cycle."
+  ukf_alpha: "Standard UKF spread parameter for a well-scaled state."
+  ukf_beta: "Optimal for a Gaussian prior."
+  ukf_kappa: "Standard secondary scaling."
+  ukf_p0_mult: >-
+    The filter starts from a profile-derived state, not a measured one, so the
+    initial uncertainty is a few steps' worth of process noise rather than zero.
+  ukf_jitter: "Numerical floor so the sigma-point factorisation cannot fail."
+  q_G: "Process noise: glucose is directly observed, so this stays small."
+  q_I_p: "Insulin is well constrained by the pump log."
+  q_D1: "D1/D2 are the truly hidden states - unannounced carbs live here."
+  q_D2: "D1/D2 are the truly hidden states - unannounced carbs live here."
+  q_gly_liver: "Liver glycogen is never observed."
+  q_gly_muscle: "Muscle glycogen is never observed."
+  q_BAC: "Unlogged drinks."
+  q_caf: "Unlogged coffee."
+  q_ket: "Ketones are only occasionally measured."
+  q_hyd: "Hydration is essentially never measured."
+  q_ex: "Residual exercise effect is inferred, not measured."
