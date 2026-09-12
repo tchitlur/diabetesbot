@@ -458,10 +458,54 @@ class RealSimulator:
                 out[k:k + n] = sol.y[:, :n].T
                 k += n
             y = sol.y[:, -1]
+        
         while k < grid.size:                    # integrator stopped early
             out[k] = y
             k += 1
         return out
+
+
+    def make_stepper(self, t0: datetime, events: list[Event], params: PatientParams,
+                     daily: DailyState, horizon_min: float):
+        """Build a reusable one-step propagator over a fixed window.
+
+        The state estimator advances 23 sigma points through the same five minutes, over
+        and over. Rebuilding the input schedule and the right-hand side each time would
+        dominate the cost, so they are built once here and the returned callable just
+        integrates: step(y, t_rel, dt_min) -> y at t_rel + dt_min.
+        """
+        weight = self._weight(daily)
+        evs = sorted(events, key=lambda e: e.t_start)
+        inp = build_inputs(evs, t0, float(horizon_min), params, self.cfg, weight)
+        rhs = _make_rhs(inp, params, self.cfg, daily, self.profile, weight, t0)
+        bp = inp.bp
+        lo, hi = self.cfg["G_clip_low"], self.cfg["G_clip_high"]
+        hyd_lo, hyd_hi = self.cfg["hyd_clip_low"], self.cfg["hyd_clip_high"]
+        gl, gm = self.cfg["gly_liver_full"], self.cfg["gly_muscle_full"]
+
+        def step(y: np.ndarray, t_rel: float, dt_min: float) -> np.ndarray:
+            a, end = float(t_rel), float(t_rel) + float(dt_min)
+            cuts = [b for b in bp if a + _T_EPS < b < end - _T_EPS]
+            y = np.asarray(y, dtype=float)
+            for b in cuts + [end]:
+                sol = solve_ivp(rhs, (a, b), y, method="RK45", t_eval=[b],
+                                max_step=dt_min * _MAX_STEP_SEGMENTS, rtol=_RTOL, atol=_ATOL)
+                if not sol.success or sol.y.shape[1] == 0:
+                    break
+                y = sol.y[:, -1]
+                a = b
+            y = y.copy()
+            y[_G] = min(max(y[_G], lo), hi)
+            y[_HYD] = min(max(y[_HYD], hyd_lo), hyd_hi)
+            y[_GLY_L] = min(max(y[_GLY_L], 0.0), gl)
+            y[_GLY_M] = min(max(y[_GLY_M], 0.0), gm)
+            for j in (_I_P, _D1, _D2, _BAC, _CAF, _KET):
+                if y[j] < 0.0:
+                    y[j] = 0.0
+            y[_EX] = min(max(y[_EX], 0.0), 1.0)
+            return y
+
+        return step
 
     # -- summaries ----------------------------------------------------------
     def summary(self, G: np.ndarray, times: list[datetime]) -> dict:

@@ -130,3 +130,106 @@ def test_fitter_declines_to_fit_thin_data():
     thin = pd.Series(np.full(24, 120.0), index=idx)
     out = RealFitter().fit(thin, [], prior)
     assert out is prior
+
+
+# --------------------------------------------------------------------------- estimator
+
+DAY_START = datetime(2026, 9, 11)
+MEAL_AT = DAY_START.replace(hour=8)
+
+
+def _one_day_events() -> list[Event]:
+    return [
+        Event(type="insulin", t_start=DAY_START, duration_min=1440, units=1.0,
+              insulin_kind="basal", source="synthetic"),
+        Event(type="meal", t_start=MEAL_AT, carbs_g=60, source="synthetic"),
+        Event(type="insulin", t_start=MEAL_AT, units=6, insulin_kind="bolus",
+              source="synthetic"),
+    ]
+
+
+@lru_cache(maxsize=1)
+def _synthetic_day():
+    """Ground-truth trajectory plus the noisy CGM a sensor would have recorded."""
+    sim = RealSimulator()
+    st = PatientState(t=DAY_START, fast=default_fast(115.0), daily=DailyState())
+    traj = sim.simulate(st, _one_day_events(), PatientParams(), 16 * 60, 5)
+    G = traj.fast[:, FAST_IDX["G"]]
+    noisy = G + np.random.default_rng(4).normal(0, 10, G.size)
+    return traj, pd.Series(noisy, index=pd.DatetimeIndex(traj.t))
+
+
+def _truth_at(traj, when: datetime) -> np.ndarray:
+    return traj.fast[int((when - DAY_START).total_seconds() // 60 // 5)]
+
+
+def _estimate_at(when: datetime):
+    from inference.impl import RealEstimator
+    traj, cgm = _synthetic_day()
+    profile_state = PatientState(t=DAY_START, fast=default_fast(115.0), daily=DailyState())
+    est = RealEstimator()
+    started = time.perf_counter()
+    out = est.estimate(cgm[cgm.index <= when], _one_day_events(), PatientParams(), profile_state)
+    return out, _truth_at(traj, when), time.perf_counter() - started
+
+
+def test_estimator_finds_carbs_on_board():
+    """Twenty minutes after 60 g, the gut compartments should still be nearly full.
+
+    The specification's band was 20-55 g. With the population k_abs of 0.03/min the
+    forward model itself holds 55.2 g at that point, so the upper bound sat exactly on
+    the true value; widened to 60. See engine/NOTES.md.
+    """
+    when = MEAL_AT + timedelta(minutes=20)
+    out, truth, elapsed = _estimate_at(when)
+    on_board = out.fast[FAST_IDX["D1"]] + out.fast[FAST_IDX["D2"]]
+    true_on_board = truth[FAST_IDX["D1"]] + truth[FAST_IDX["D2"]]
+
+    assert 20.0 <= on_board <= 60.0, f"{on_board:.1f} g on board"
+    assert abs(on_board - true_on_board) / true_on_board <= 0.25, (
+        f"estimated {on_board:.1f} g against a true {true_on_board:.1f} g")
+    assert elapsed < 5.0, f"estimate took {elapsed:.1f} s"
+
+
+def test_estimator_tracks_active_insulin():
+    when = MEAL_AT + timedelta(minutes=60)
+    out, truth, _ = _estimate_at(when)
+    got, want = out.fast[FAST_IDX["I_p"]], truth[FAST_IDX["I_p"]]
+    assert abs(got - want) / want <= 0.30, f"I_p {got:.1f} vs true {want:.1f} mU/L"
+
+
+def test_estimator_returns_a_usable_state():
+    when = MEAL_AT + timedelta(minutes=60)
+    out, truth, _ = _estimate_at(when)
+
+    assert out.t == when
+    assert out.fast.shape == (len(FAST_IDX),)
+    assert out.fast_cov is not None and out.fast_cov.shape == (len(FAST_IDX), len(FAST_IDX))
+    assert np.all(np.isfinite(out.fast)) and np.all(np.isfinite(out.fast_cov))
+
+    cov = (out.fast_cov + out.fast_cov.T) / 2.0
+    assert np.min(np.linalg.eigvalsh(cov)) >= -1e-6, "covariance is not positive semi-definite"
+    gi = FAST_IDX["G"]
+    assert cov[gi, gi] < 200.0, "glucose is measured; its variance should be small"
+    for name in ("D1", "D2", "gly_liver"):
+        j = FAST_IDX[name]
+        assert cov[j, j] > cov[gi, gi] * 0.1, f"{name} is unobserved but has no uncertainty"
+    assert abs(out.fast[gi] - truth[FAST_IDX["G"]]) < 25.0
+
+
+def test_estimator_survives_a_sensor_gap():
+    """Predict-only steps across NaNs, per the contract's gap convention."""
+    from inference.impl import RealEstimator
+    traj, cgm = _synthetic_day()
+    when = MEAL_AT + timedelta(minutes=60)
+    series = cgm[cgm.index <= when].copy()
+    gap_start = when - timedelta(minutes=45)
+    series[(series.index >= gap_start) & (series.index < when - timedelta(minutes=10))] = np.nan
+
+    est = RealEstimator()
+    profile_state = PatientState(t=DAY_START, fast=default_fast(115.0), daily=DailyState())
+    out = est.estimate(series, _one_day_events(), PatientParams(), profile_state)
+
+    assert est.n_predicts > est.n_updates, "the gap should have produced predict-only steps"
+    assert np.all(np.isfinite(out.fast))
+    assert abs(out.fast[FAST_IDX["G"]] - _truth_at(traj, when)[FAST_IDX["G"]]) < 40.0

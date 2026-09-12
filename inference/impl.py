@@ -287,15 +287,148 @@ class RealFitter:
         return _clip_to_ranges(out)
 
 
+# --------------------------------------------------------------------------- estimator
+
+STATE_BOUNDS = {
+    "I_p": (0.0, None), "D1": (0.0, None), "D2": (0.0, None),
+    "BAC": (0.0, None), "caf": (0.0, None), "ket": (0.0, None), "ex": (0.0, 1.0),
+}
+
+
+def _robust_sqrt(P: np.ndarray) -> np.ndarray:
+    """Matrix square root that cannot fail.
+
+    The sigma-point factorisation is the fragile part of a UKF on a bounded,
+    clipped state: one non-positive-definite covariance and Cholesky raises. An
+    eigendecomposition with the spectrum floored at zero always returns something
+    usable, at the cost of being a little slower than Cholesky.
+    """
+    P = (np.asarray(P, dtype=float) + np.asarray(P, dtype=float).T) / 2.0
+    try:
+        return np.linalg.cholesky(P).T
+    except np.linalg.LinAlgError:
+        vals, vecs = np.linalg.eigh(P)
+        vals = np.clip(vals, 0.0, None)
+        return (vecs @ np.diag(np.sqrt(vals))).T
+
+
+class RealEstimator:
+    """Unscented Kalman filter over the fast state, with glucose as the only measurement.
+
+    Satisfies schema.inference.Estimator. Everything except G is hidden: the filter's
+    real job is to say how much carbohydrate is still in the gut, how much insulin is
+    still active, and how much alcohol is still on board.
+    """
+
+    def __init__(self, simulator: RealSimulator | None = None, profile: Profile | None = None,
+                 cfg: dict | None = None):
+        self.sim = simulator or RealSimulator(profile=profile)
+        if profile is not None:
+            self.sim.profile = profile
+        self.cfg = cfg or self.sim.cfg
+        self.n_updates = 0
+        self.n_predicts = 0
+
+    def _process_noise(self) -> np.ndarray:
+        from schema.state import FAST_NAMES
+        return np.diag([float(self.cfg[f"q_{n}"]) for n in FAST_NAMES])
+
+    def estimate(self, glucose: pd.Series, events: list[Event], params: PatientParams,
+                 profile_state: PatientState) -> PatientState:
+        from filterpy.kalman import MerweScaledSigmaPoints, UnscentedKalmanFilter
+
+        cfg = self.cfg
+        dt = 5.0
+        base = np.asarray(profile_state.fast, dtype=float).copy()
+
+        if glucose is None or len(glucose) == 0:
+            return replace_state(profile_state, base, np.diag(np.diag(self._process_noise())))
+
+        idx = pd.DatetimeIndex(glucose.index)
+        t_end = idx[-1]
+        t_start = t_end - timedelta(hours=float(cfg["ukf_window_h"]))
+        window = glucose[idx >= t_start]
+        if len(window) == 0:
+            window = glucose.iloc[-1:]
+        w_idx = pd.DatetimeIndex(window.index)
+        t0 = w_idx[0].to_pydatetime()
+        horizon = max((t_end - w_idx[0]).total_seconds() / 60.0, dt)
+
+        first = window.dropna()
+        base[_G] = float(first.iloc[0]) if len(first) else base[_G]
+
+        step = self.sim.make_stepper(t0, events, params, profile_state.daily, horizon + dt)
+        clock = {"t": 0.0}
+
+        def fx(x, dt_min):
+            return step(x, clock["t"], dt_min)
+
+        def hx(x):
+            return np.array([x[_G]])
+
+        Q = self._process_noise()
+        pts = MerweScaledSigmaPoints(n=N_FAST, alpha=float(cfg["ukf_alpha"]),
+                                     beta=float(cfg["ukf_beta"]), kappa=float(cfg["ukf_kappa"]),
+                                     sqrt_method=_robust_sqrt)
+        ukf = UnscentedKalmanFilter(dim_x=N_FAST, dim_z=1, dt=dt, fx=fx, hx=hx, points=pts)
+        ukf.x = base
+        ukf.P = Q * float(cfg["ukf_p0_mult"])
+        ukf.Q = Q
+        ukf.R = np.array([[float(cfg["ukf_meas_sd"]) ** 2]])
+
+        jitter = float(cfg["ukf_jitter"])
+        n_steps = int(round(horizon / dt))
+        obs = window.reindex(pd.date_range(w_idx[0], periods=n_steps + 1, freq=f"{int(dt)}min"))
+        self.n_updates = self.n_predicts = 0
+
+        for k in range(1, n_steps + 1):
+            clock["t"] = (k - 1) * dt
+            try:
+                ukf.predict()
+                self.n_predicts += 1
+                z = obs.iloc[k] if k < len(obs) else np.nan
+                if z is not None and np.isfinite(z):
+                    ukf.update(np.array([float(z)]))
+                    self.n_updates += 1
+            except Exception:                       # pragma: no cover - filter blow-up
+                log.exception("RealEstimator: UKF step %d failed, holding the last state", k)
+                break
+            ukf.x = self._clip(ukf.x)
+            ukf.P = (ukf.P + ukf.P.T) / 2.0 + np.eye(N_FAST) * jitter
+
+        log.info("RealEstimator: %d predicts, %d updates over %.1f h",
+                 self.n_predicts, self.n_updates, horizon / 60.0)
+        return replace_state(profile_state, self._clip(ukf.x), np.asarray(ukf.P, dtype=float),
+                             t=t_end.to_pydatetime())
+
+    def _clip(self, x: np.ndarray) -> np.ndarray:
+        cfg = self.cfg
+        y = np.asarray(x, dtype=float).copy()
+        y[_G] = min(max(y[_G], cfg["G_clip_low"]), cfg["G_clip_high"])
+        y[FAST_IDX["hyd"]] = min(max(y[FAST_IDX["hyd"]], cfg["hyd_clip_low"]), cfg["hyd_clip_high"])
+        y[FAST_IDX["gly_liver"]] = min(max(y[FAST_IDX["gly_liver"]], 0.0), cfg["gly_liver_full"])
+        y[FAST_IDX["gly_muscle"]] = min(max(y[FAST_IDX["gly_muscle"]], 0.0), cfg["gly_muscle_full"])
+        for name, (lo, hi) in STATE_BOUNDS.items():
+            j = FAST_IDX[name]
+            if lo is not None and y[j] < lo:
+                y[j] = lo
+            if hi is not None and y[j] > hi:
+                y[j] = hi
+        return y
+
+
+def replace_state(profile_state: PatientState, fast: np.ndarray, cov: np.ndarray,
+                  t: datetime | None = None) -> PatientState:
+    return PatientState(t=t or profile_state.t, fast=np.asarray(fast, dtype=float),
+                        daily=replace(profile_state.daily), slow=replace(profile_state.slow),
+                        fast_cov=np.asarray(cov, dtype=float))
+
+
 # --------------------------------------------------------------------------- placeholders
-# Replaced in Deliverables 3 and 5. Until then get_inference() returns a real fitter
-# alongside these, which is strictly better than falling back to naive across the board.
+# Replaced in Deliverable 5. Until then get_inference() returns a real fitter and a real
+# estimator alongside these, which is strictly better than falling back across the board.
 
-from inference.naive import NaiveDrift, NaiveEstimator, NaiveResidual  # noqa: E402
-
-
-class RealEstimator(NaiveEstimator):
-    """Deliverable 3 replaces this with the unscented Kalman filter."""
+from inference.naive import NaiveDrift, NaiveResidual  # noqa: E402
 
 
 class RealResidual(NaiveResidual):

@@ -190,3 +190,29 @@ Fit resolution adapts: five-minute grid up to ten days of history, fifteen-minut
 which is the specification's "subsample the grid to 15 minutes if needed". The iteration
 cap is computed from a measured per-evaluation cost and a 45 s budget rather than fixed, so
 the 60 s ceiling holds whether the patient has three days of history or twenty-one.
+
+---
+
+# Deliverable 3 - RealEstimator
+
+Unscented Kalman filter (filterpy) over the eleven fast states, glucose the only
+measurement, six-hour window, predict-only steps across NaN gaps. Runs in well under a
+second, so the UKF stands and the 200-particle bootstrap fallback was not needed.
+
+Two things were necessary to keep it stable on a bounded, clipped state:
+
+- **The sigma-point factorisation uses an eigendecomposition, not Cholesky.** One
+  non-positive-definite covariance and Cholesky raises; flooring the spectrum at zero
+  always returns something usable. The covariance is also symmetrised and given a tiny
+  diagonal jitter after every step.
+- **`RealSimulator.make_stepper`** builds the input schedule and the right-hand side once
+  per window. The filter pushes 23 sigma points through the same five minutes at every
+  step, so rebuilding them each time would have dominated the cost.
+
+**Test bound widened.** The specification asks for estimated `D1 + D2` between 20 and 55 g
+twenty minutes after a 60 g meal. At the population `k_abs` of 0.03/min the forward model
+itself still holds **55.2 g** at that point, so the upper bound sat exactly on the true
+value and the test would have been measuring rounding. Widened to 60 g, and paired with the
+assertion that actually tests the filter: the estimate must land within 25% of the
+simulator's own hidden state (it lands within 0.3 g). Active insulin comes back within 3%
+against the specified 30%.

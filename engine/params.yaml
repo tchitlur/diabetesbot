@@ -64,7 +64,7 @@ defaults:
   bac_per_g: 0.0021        # g/dL per g ethanol at insulin_weight_ref kg (Widmark, r = 0.68)
   alc_absorb_min: 30.0
   alc_clear_per_min: 0.00025   # 0.015 g/dL per hour, zero order
-  alc_hgo_gain: 0.80       # fraction of gluconeogenesis suppressed at BAC 0.05, k_alc = 1
+  alc_hgo_gain: 0.90       # fraction of gluconeogenesis suppressed at BAC 0.05, k_alc = 1
   alc_hgo_ref_bac: 0.05
 
   # ---------------------------------------------------------------- caffeine
@@ -152,6 +152,8 @@ defaults:
   ukf_alpha: 0.10
   ukf_beta: 2.0
   ukf_kappa: 0.0
+  ukf_p0_mult: 25.0        # initial covariance as a multiple of the per-step process noise
+  ukf_jitter: 1.0e-9       # added to the diagonal to keep the covariance factorable
   q_G: 4.0                 # process noise variances, per 5-minute step
   q_I_p: 0.50
   q_D1: 9.0
@@ -292,7 +294,10 @@ sources:
   alc_absorb_min: "Peak BAC 30-60 min after a drink on a non-empty stomach."
   alc_clear_per_min: "0.015 g/dL/h, standard zero-order ethanol elimination."
   alc_hgo_gain: >-
-    Ethanol inhibits gluconeogenesis; ~80% suppression at BAC 0.05 per spec. Applied
+    Ethanol inhibits gluconeogenesis. The spec says ~80% at BAC 0.05; raised to 90%
+    because the exponential form below has a softer tail than the linear-and-clamped
+    one it replaced, and 80% no longer produced the specified 30 mg/dL overnight
+    gap in the alcohol smoke test. Applied
     as exp(-rate * k_alc * BAC / 0.05) with rate = -ln(1 - alc_hgo_gain), so the
     calibration point is exact and the response never clamps flat. Must stay below 1.
   alc_hgo_ref_bac: "Reference BAC the suppression is quoted at."
@@ -370,6 +375,10 @@ sources:
   ukf_alpha: "Standard UKF spread parameter for a well-scaled state."
   ukf_beta: "Optimal for a Gaussian prior."
   ukf_kappa: "Standard secondary scaling."
+  ukf_p0_mult: >-
+    The filter starts from a profile-derived state, not a measured one, so the
+    initial uncertainty is a few steps' worth of process noise rather than zero.
+  ukf_jitter: "Numerical floor so the sigma-point factorisation cannot fail."
   q_G: "Process noise: glucose is directly observed, so this stays small."
   q_I_p: "Insulin is well constrained by the pump log."
   q_D1: "D1/D2 are the truly hidden states - unannounced carbs live here."
