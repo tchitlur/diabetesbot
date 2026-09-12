@@ -233,3 +233,159 @@ def test_estimator_survives_a_sensor_gap():
     assert est.n_predicts > est.n_updates, "the gap should have produced predict-only steps"
     assert np.all(np.isfinite(out.fast))
     assert abs(out.fast[FAST_IDX["G"]] - _truth_at(traj, when)[FAST_IDX["G"]]) < 40.0
+
+
+# --------------------------------------------------------------------------- residual model
+
+RESID_START = datetime(2026, 8, 10)
+RESID_DAYS = 14
+
+
+def _logged_week(days: int = RESID_DAYS) -> list[Event]:
+    """What the patient actually told us about."""
+    out: list[Event] = []
+    for d in range(days):
+        day = RESID_START + timedelta(days=d)
+        out.append(Event(type="insulin", t_start=day, duration_min=1440, units=1.0,
+                         insulin_kind="basal", source="synthetic"))
+        for hour, minute, carbs, units in ((7, 30, 55, 5.5), (12, 30, 70, 7.0), (19, 0, 80, 8.0)):
+            ts = day.replace(hour=hour, minute=minute)
+            out.append(Event(type="meal", t_start=ts, carbs_g=carbs, source="synthetic"))
+            out.append(Event(type="insulin", t_start=ts, units=units, insulin_kind="bolus",
+                             source="synthetic"))
+    return out
+
+
+def _unlogged_snacks(days: int = RESID_DAYS) -> list[Event]:
+    """A 25 g biscuit at four every afternoon that never makes it into the log.
+
+    This is the whole point of a residual model: a repeatable pattern the mechanistic
+    model cannot know about, which a learner can pick up from the time of day.
+    """
+    return [Event(type="meal", t_start=(RESID_START + timedelta(days=d)).replace(hour=16),
+                  carbs_g=25, source="synthetic") for d in range(days)]
+
+
+@lru_cache(maxsize=1)
+def _residual_history():
+    sim = RealSimulator()
+    st = PatientState(t=RESID_START, fast=default_fast(125.0), daily=DailyState())
+    traj = sim.simulate(st, _logged_week() + _unlogged_snacks(), PatientParams(),
+                        RESID_DAYS * 1440, 5)
+    G = traj.fast[:, FAST_IDX["G"]]
+    noisy = G + np.random.default_rng(9).normal(0, 8, G.size)
+    return pd.Series(noisy, index=pd.DatetimeIndex(traj.t))
+
+
+@lru_cache(maxsize=1)
+def _trained_residual():
+    from inference.impl import RealResidual
+    model = RealResidual()
+    started = time.perf_counter()
+    model.fit(_residual_history(), _logged_week(), PatientParams())
+    return model, time.perf_counter() - started
+
+
+def test_residual_trains_inside_its_budget():
+    model, elapsed = _trained_residual()
+    assert elapsed < 30.0, f"training took {elapsed:.1f} s"
+    assert model.train_rows > 100, f"only {model.train_rows} forecast origins"
+
+
+def test_residual_beats_leaving_the_forecast_alone():
+    """On held-out days, every kept horizon must reduce the error it was trained on."""
+    model, _ = _trained_residual()
+    from inference.impl import HORIZONS
+    assert set(model.models) == set(HORIZONS), f"kept only {sorted(model.models)}"
+    for h in HORIZONS:
+        assert model.holdout_mae[h] < model.baseline_mae[h], (
+            f"h={h}: {model.holdout_mae[h]:.2f} vs {model.baseline_mae[h]:.2f} mg/dL")
+
+
+def test_residual_correction_has_the_right_shape():
+    model, _ = _trained_residual()
+    from inference.impl import HORIZONS, RealEstimator
+    sim = RealSimulator()
+    cgm = _residual_history()
+    origin = RESID_START + timedelta(days=RESID_DAYS - 1, hours=15)
+    recent = cgm[cgm.index <= origin]
+    anchor = PatientState(t=origin, fast=default_fast(float(recent.iloc[-1])), daily=DailyState())
+    est = RealEstimator().estimate(recent, _logged_week(), PatientParams(), anchor)
+    forecast = sim.simulate(PatientState(t=origin, fast=est.fast, daily=DailyState()),
+                            _logged_week(), PatientParams(), 240, 5)
+
+    out = model.correct(forecast, recent, _logged_week())
+    assert out is not forecast, "correct() must return a new Trajectory"
+    assert out.fast.shape == forecast.fast.shape and out.t == forecast.t
+
+    before = forecast.fast[:, FAST_IDX["G"]]
+    after = out.fast[:, FAST_IDX["G"]]
+    shift = after - before
+    assert abs(shift[0]) < 1e-9, "the present needs no correction"
+    beyond = int(max(HORIZONS) / 5) + 1
+    assert np.allclose(shift[beyond:], 0.0), "there is no evidence past the last horizon"
+    assert np.abs(shift[1:beyond]).max() > 0.5, "the correction did nothing at all"
+    assert out.summary["mean_G"] == pytest.approx(float(after.mean()))
+    assert np.array_equal(forecast.fast[:, FAST_IDX["G"]], before), "correct() mutated its input"
+
+
+def test_untrained_residual_is_a_no_op():
+    from inference.impl import RealResidual
+    sim = RealSimulator()
+    traj = sim.simulate(PatientState(t=RESID_START, fast=default_fast(120.0), daily=DailyState()),
+                        _logged_week(), PatientParams(), 120, 5)
+    assert RealResidual().correct(traj, _residual_history(), _logged_week()) is traj
+
+
+def test_features_never_look_ahead():
+    """Anything after the origin must be invisible, or the walk-forward split is a lie."""
+    from inference.impl import features_at
+    cgm = _residual_history()
+    origin = RESID_START + timedelta(days=3, hours=10)
+    events = _logged_week()
+    full = features_at(origin, cgm, events, 1.0)
+    truncated = features_at(origin, cgm[cgm.index <= origin],
+                            [e for e in events if e.t_start <= origin], 1.0)
+    assert np.allclose(full, truncated, equal_nan=True)
+
+
+# --------------------------------------------------------------------------- drift
+
+def _drift_with(errors_by_day: dict[int, float]):
+    from inference.impl import RealDrift
+    d = RealDrift()
+    base = datetime(2026, 9, 1)
+    for day, err in errors_by_day.items():
+        for step in range(24):
+            d.update(base + timedelta(days=day, hours=step), 100.0 + err, 100.0)
+    return d
+
+
+def test_drift_needs_enough_history():
+    from inference.impl import RealDrift
+    assert RealDrift().score() == 0.0
+    assert _drift_with({0: 10.0, 1: 10.0, 2: 10.0}).score() == 0.0
+
+
+def test_drift_is_zero_when_the_model_still_fits():
+    score = _drift_with({d: 12.0 for d in range(14)}).score()
+    assert score == pytest.approx(0.0, abs=1e-9)
+
+
+def test_drift_fires_when_predictions_go_bad():
+    """Three days of doubled error against the fortnight before it."""
+    errors = {d: 10.0 for d in range(11)}
+    errors.update({11: 25.0, 12: 27.0, 13: 30.0})
+    score = _drift_with(errors).score()
+    assert score > 1.0, f"drift score only reached {score:.2f}"
+
+
+def test_drift_ignores_rubbish():
+    from inference.impl import RealDrift
+    d = RealDrift()
+    base = datetime(2026, 9, 1)
+    d.update(base, float("nan"), 100.0)
+    d.update(base, 100.0, None)
+    d.update(base, None, 100.0)
+    assert d.log == []
+    assert d.score() == 0.0

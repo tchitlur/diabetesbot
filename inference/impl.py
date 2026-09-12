@@ -424,16 +424,293 @@ def replace_state(profile_state: PatientState, fast: np.ndarray, cov: np.ndarray
                         fast_cov=np.asarray(cov, dtype=float))
 
 
-# --------------------------------------------------------------------------- placeholders
-# Replaced in Deliverable 5. Until then get_inference() returns a real fitter and a real
-# estimator alongside these, which is strictly better than falling back across the board.
+# --------------------------------------------------------------------------- residual model
 
-from inference.naive import NaiveDrift, NaiveResidual  # noqa: E402
+HORIZONS = (30, 60, 120)          # minutes ahead that get their own regressor
+ORIGIN_STRIDE_MIN = 30            # how often to take a forecast origin when training
+FEATURE_NAMES = (
+    "hour_sin", "hour_cos", "dow", "slope_30", "G_now",
+    "carbs_3h", "fat_3h", "protein_3h", "insulin_4h", "ethanol_8h", "caffeine_6h",
+    "exercise_min_12h", "sleep_h", "si_mult",
+)
 
 
-class RealResidual(NaiveResidual):
-    """Deliverable 5 replaces this with the LightGBM residual model."""
+# LightGBM's native training API, not its sklearn wrapper: lightgbm.sklearn needs
+# scikit-learn, which is not in requirements.txt, and requirements.txt is not ours to
+# edit. See engine/NOTES.md.
+LGB_PARAMS = {
+    "objective": "regression",
+    "learning_rate": 0.05,
+    "num_leaves": 15,
+    "min_data_in_leaf": 20,
+    "bagging_fraction": 0.9,
+    "bagging_freq": 1,
+    "feature_fraction": 0.9,
+    "verbose": -1,
+    "seed": 0,
+    "deterministic": True,
+    "force_row_wise": True,
+}
+LGB_ROUNDS = 200
 
 
-class RealDrift(NaiveDrift):
-    """Deliverable 5 replaces this with the rolling prediction-error monitor."""
+def _window_sum(events: list[Event], t: datetime, hours: float, field: str,
+                types: tuple[str, ...]) -> float:
+    lo = t - timedelta(hours=hours)
+    return float(sum(getattr(e, field) for e in events
+                     if e.type in types and lo <= e.t_start <= t))
+
+
+def _sleep_hours(events: list[Event], t: datetime) -> float:
+    """Hours slept in the 24 hours up to the forecast origin."""
+    lo = t - timedelta(hours=24)
+    return float(sum(e.duration_min for e in events
+                     if e.type == "sleep" and lo <= e.t_start <= t) / 60.0)
+
+
+def features_at(t: datetime, glucose: pd.Series, events: list[Event],
+                si_mult: float) -> np.ndarray:
+    """One feature row. Reads only data at or before t, so training cannot leak."""
+    past = glucose[glucose.index <= t].dropna()
+    G_now = float(past.iloc[-1]) if len(past) else float("nan")
+    slope = 0.0
+    if len(past) >= 2:
+        window = past[past.index >= t - timedelta(minutes=30)]
+        if len(window) >= 2:
+            span = (window.index[-1] - window.index[0]).total_seconds() / 60.0
+            if span > 0:
+                slope = float((window.iloc[-1] - window.iloc[0]) / span)
+    hour = t.hour + t.minute / 60.0
+    return np.array([
+        math.sin(2 * math.pi * hour / 24.0),
+        math.cos(2 * math.pi * hour / 24.0),
+        float(t.weekday()),
+        slope,
+        G_now,
+        _window_sum(events, t, 3, "carbs_g", ("meal", "alcohol")),
+        _window_sum(events, t, 3, "fat_g", ("meal",)),
+        _window_sum(events, t, 3, "protein_g", ("meal",)),
+        _window_sum(events, t, 4, "units", ("insulin",)),
+        _window_sum(events, t, 8, "ethanol_g", ("alcohol",)),
+        _window_sum(events, t, 6, "caffeine_mg", ("caffeine",)),
+        _window_sum(events, t, 12, "duration_min", ("exercise",)),
+        _sleep_hours(events, t),
+        float(si_mult),
+    ], dtype=float)
+
+
+class RealResidual:
+    """Gradient-boosted correction on top of the mechanistic forecast.
+
+    Satisfies schema.inference.Residual. One regressor per horizon; correct() applies
+    them at 30, 60 and 120 minutes and interpolates linearly in between, tapering to
+    zero beyond the last horizon because there is no evidence out there.
+    """
+
+    def __init__(self, simulator: RealSimulator | None = None, profile: Profile | None = None,
+                 time_budget_s: float = 25.0):
+        self.sim = simulator or RealSimulator(profile=profile)
+        if profile is not None:
+            self.sim.profile = profile
+        self.time_budget_s = float(time_budget_s)
+        self.models: dict[int, object] = {}
+        self.train_rows = 0
+        self.train_mae: dict[int, float] = {}
+        self.holdout_mae: dict[int, float] = {}
+        self.baseline_mae: dict[int, float] = {}
+
+    # -- training ----------------------------------------------------------
+    def _origins(self, glucose: pd.Series) -> list[datetime]:
+        idx = pd.DatetimeIndex(glucose.dropna().index)
+        if len(idx) == 0:
+            return []
+        stride = timedelta(minutes=ORIGIN_STRIDE_MIN)
+        last_usable = idx[-1] - timedelta(minutes=max(HORIZONS))
+        out = []
+        cursor = idx[0] + timedelta(hours=12)        # leave room for the lookback windows
+        while cursor <= last_usable:
+            out.append(cursor.to_pydatetime())
+            cursor = cursor + stride
+        return out
+
+    def _history_states(self, obs: pd.Series, events: list[Event], params: PatientParams,
+                        daily: DailyState) -> dict[datetime, np.ndarray]:
+        """Replay the history day by day, keeping the full state at every grid point.
+
+        Glucose is re-anchored to each day's first reading and the hidden states carry
+        over, the same convention RealFitter uses, so the two agree about what the
+        patient's insulin and carbohydrate on board were at any moment.
+        """
+        out: dict[datetime, np.ndarray] = {}
+        carried: np.ndarray | None = None
+        for start, day_obs, day_events in _split_days(obs, events):
+            first = float(day_obs.iloc[0])
+            y = default_fast(first) if carried is None else carried.copy()
+            y[_G] = first
+            traj = self.sim.simulate(PatientState(t=start, fast=y, daily=daily),
+                                     day_events, params, 1440, 5)
+            for when, row in zip(traj.t, traj.fast):
+                out[when] = row
+            carried = traj.fast[-1]
+        return out
+
+    def fit(self, glucose: pd.Series, events: list[Event], params: PatientParams) -> None:
+        started = time.perf_counter()
+        self.models = {}
+        if glucose is None or len(glucose.dropna()) < 200:
+            log.info("RealResidual: not enough history to train on")
+            return
+
+        obs = glucose.dropna()
+        lookup = {t.to_pydatetime(): float(v) for t, v in obs.items()}
+        daily = DailyState()
+        evs = sorted(events, key=lambda e: e.t_start)
+        history = self._history_states(obs, evs, params, daily)
+
+        X: list[np.ndarray] = []
+        Y: dict[int, list[float]] = {h: [] for h in HORIZONS}
+        for origin in self._origins(glucose):
+            if time.perf_counter() - started > self.time_budget_s:
+                log.warning("RealResidual: ran out of time building features")
+                break
+            truth = {h: lookup.get(origin + timedelta(minutes=h)) for h in HORIZONS}
+            if any(v is None for v in truth.values()):
+                continue
+            row = features_at(origin, obs, evs, daily.si_mult)
+            G_now = row[FEATURE_NAMES.index("G_now")]
+            if not np.isfinite(G_now):
+                continue
+            fast = history.get(origin)
+            if fast is None:
+                continue
+            # Anchor glucose on the reading and keep everything else the model believes,
+            # which is exactly what a forecast off the state estimator looks like. Starting
+            # from default_fast instead would throw away the insulin and carbohydrate on
+            # board, and the regressors would spend their capacity re-learning those rather
+            # than the model error they exist to capture.
+            fast = fast.copy()
+            fast[_G] = G_now
+            st = PatientState(t=origin, fast=fast, daily=daily)
+            recent = [e for e in evs
+                      if origin - timedelta(hours=12) <= e.t_start
+                      <= origin + timedelta(minutes=max(HORIZONS))]
+            traj = self.sim.simulate(st, recent, params, max(HORIZONS), 30)
+            g = traj.fast[:, _G]
+            X.append(row)
+            for h in HORIZONS:
+                Y[h].append(truth[h] - float(g[h // 30]))
+
+        self.train_rows = len(X)
+        if self.train_rows < 50:
+            log.info("RealResidual: only %d usable origins, staying out of the way",
+                     self.train_rows)
+            return
+
+        import lightgbm as lgb
+
+        Xa = np.vstack(X)
+        split = int(self.train_rows * 0.8)          # walk-forward: fit the past, score the future
+        for h in HORIZONS:
+            ya = np.asarray(Y[h], dtype=float)
+            train = lgb.Dataset(Xa[:split], label=ya[:split],
+                                feature_name=list(FEATURE_NAMES), free_raw_data=False)
+            model = lgb.train(LGB_PARAMS, train, num_boost_round=LGB_ROUNDS)
+            self.train_mae[h] = float(np.mean(np.abs(model.predict(Xa[:split]) - ya[:split])))
+            if split < self.train_rows:
+                self.holdout_mae[h] = float(np.mean(np.abs(model.predict(Xa[split:]) - ya[split:])))
+                self.baseline_mae[h] = float(np.mean(np.abs(ya[split:])))
+                if self.holdout_mae[h] >= self.baseline_mae[h]:
+                    log.info("RealResidual: h=%d min does not beat leaving it alone "
+                             "(%.1f vs %.1f mg/dL), dropping it",
+                             h, self.holdout_mae[h], self.baseline_mae[h])
+                    continue
+            self.models[h] = model
+
+        log.info("RealResidual: %d origins, %d of %d horizons kept, %.1f s",
+                 self.train_rows, len(self.models), len(HORIZONS),
+                 time.perf_counter() - started)
+
+    # -- application -------------------------------------------------------
+    def correct(self, traj: Trajectory, glucose_recent: pd.Series,
+                events_recent: list[Event]) -> Trajectory:
+        if not self.models or not traj.t:
+            return traj
+        origin = traj.t[0]
+        obs = glucose_recent.dropna() if glucose_recent is not None else pd.Series(dtype=float)
+        if len(obs) == 0:
+            return traj
+        row = features_at(origin, obs, sorted(events_recent, key=lambda e: e.t_start),
+                          traj.daily_end.si_mult).reshape(1, -1)
+        if not np.isfinite(row).all():
+            return traj
+
+        knots = [0.0]                                # the present needs no correction
+        values = [0.0]
+        for h in HORIZONS:
+            model = self.models.get(h)
+            if model is None:
+                continue
+            knots.append(float(h))
+            values.append(float(model.predict(row)[0]))
+        if len(knots) == 1:
+            return traj
+
+        minutes = np.array([(t - origin).total_seconds() / 60.0 for t in traj.t])
+        shift = np.interp(minutes, knots, values, left=0.0, right=0.0)
+        shift[minutes > knots[-1]] = 0.0            # no evidence past the last horizon
+
+        cfg = self.sim.cfg
+        fast = traj.fast.copy()
+        fast[:, _G] = np.clip(fast[:, _G] + shift, cfg["G_clip_low"], cfg["G_clip_high"])
+        from schema.state import energy_score
+        energy = np.array([energy_score(r, traj.daily_end) for r in fast])
+        return Trajectory(t=list(traj.t), fast=fast, energy=energy,
+                          daily_end=replace(traj.daily_end), slow_end=replace(traj.slow_end),
+                          summary=self.sim.summary(fast[:, _G], list(traj.t)))
+
+
+# --------------------------------------------------------------------------- drift
+
+class RealDrift:
+    """Is the model still describing this patient?
+
+    A rolling log of one-hour prediction errors. The score compares the last three days
+    against the ten before them: 0 means in sync, above 1 means the error has more than
+    doubled, which is the signature of an illness, a failed infusion site, or an insulin
+    change nobody logged.
+    """
+
+    RECENT_DAYS = 3
+    BASELINE_DAYS = 14
+    MIN_DAYS = 4
+    MAX_LOG = 20000
+
+    def __init__(self):
+        self.log: list[tuple[datetime, float]] = []
+
+    def update(self, t, predicted_G: float, actual_G: float) -> None:
+        if predicted_G is None or actual_G is None:
+            return
+        if not (np.isfinite(predicted_G) and np.isfinite(actual_G)):
+            return
+        self.log.append((t, abs(float(predicted_G) - float(actual_G))))
+        if len(self.log) > self.MAX_LOG:
+            self.log = self.log[-self.MAX_LOG:]
+
+    def score(self) -> float:
+        if not self.log:
+            return 0.0
+        now = max(t for t, _ in self.log)
+        span_days = (now - min(t for t, _ in self.log)).total_seconds() / 86400.0
+        if span_days < self.MIN_DAYS:
+            return 0.0
+        recent_from = now - timedelta(days=self.RECENT_DAYS)
+        base_from = now - timedelta(days=self.BASELINE_DAYS)
+        recent = [e for t, e in self.log if t > recent_from]
+        baseline = [e for t, e in self.log if base_from <= t <= recent_from]
+        if not recent or not baseline:
+            return 0.0
+        base_mean = float(np.mean(baseline))
+        if base_mean <= 1e-9:
+            return 0.0
+        return float(max(0.0, float(np.mean(recent)) / base_mean - 1.0))
