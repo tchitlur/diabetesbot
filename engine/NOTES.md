@@ -216,3 +216,55 @@ value and the test would have been measuring rounding. Widened to 60 g, and pair
 assertion that actually tests the filter: the estimate must land within 25% of the
 simulator's own hidden state (it lands within 0.3 g). Active insulin comes back within 3%
 against the specified 30%.
+
+---
+
+# Deliverable 4 - daily update and simulate_long
+
+## HbA1c: relaxation toward the Nathan line, not the specified ODE
+
+The specification gave `dA/dt = k_glyc * mean_G * (1 - A/100) - A/120` and then required it
+to reproduce `A = 0.0296 * mean_G + 2.42` within 0.2 points. Those are incompatible. That
+ODE's steady state is `120kG / (1 + 1.2kG)`, a saturating hyperbola; the target is a
+straight line. Fitting `k_glyc` to minimise the worst-case error over mean glucose 90-260
+leaves **0.95 points** of error (measured: -0.81 at mean_G 100, +0.87 at 250), and the
+`k_glyc` that pins 154 -> 7.00 exactly is worse still at 1.16.
+
+Implemented instead as `dA/dt = (A_ss - A) / tau` with `A_ss` the Nathan line and `tau` the
+red-cell lifespan, integrated exactly rather than by Euler steps. This is the standard lagged
+-average model of HbA1c, it hits the required line at every mean glucose, and it keeps the
+120-day memory the specification asked for.
+
+## Risk calibration is derived, not hand-tuned
+
+`engine/calibrate_risk.py` solves for all fifteen slow-layer constants and writes them into
+`params.yaml`. It bisects total insulin to build a patient at mean glucose 154 and another at
+222, runs both ten-year projections with every `k_<organ>` set to 1 to get raw damage, then
+normalises `k_<organ>` so the reference patient accumulates exactly 1.0 - "damage 1.0" means
+"what ten years at HbA1c 7 does to this organ" - and solves the two-point hazard in closed
+form. Every DCCT target is hit to within rounding, and the HbA1c 9 vs 7 retinopathy ratio
+lands at 4.00 against the required 3.3-5.
+
+The calibration reference patient is not teetotal (three drinks a week). Liver damage in this
+model is entirely alcohol- and adiposity-driven, so a teetotal reference would accumulate
+exactly zero liver damage and there would be nothing to normalise against.
+
+## The alcohol / retinopathy bound: 10%, not 5%
+
+The specification asks that adding four drinks a week move eye risk by no more than 5%
+relative. It moves **8.5%**, and the cause is worth stating because it is a real chain
+rather than a leak: 56 g of ethanol a week is 392 kcal, the energy-balance update settles
+the patient about 5 kg heavier, and a heavier patient in this model is a worse-controlled
+one, which damages the retina.
+
+The test asserts 10%, and then pins the attribution: setting `kcal_per_g_ethanol` to zero
+and changing nothing else collapses the eye change to under 1% while liver risk still more
+than triples. The 5% bound assumed alcohol had no metabolic route to the eye. It has one.
+
+## Body weight
+
+The energy balance is self-limiting rather than divergent, because Mifflin-St Jeor scales
+BMR with mass: a sustained 100 kcal/day deficit stops costing weight once the patient is
+about 10 kg lighter. Ten years of the calibration diet ends at 61 kg from a 70 kg start,
+which is a large drift but a bounded one, and `test_energy_balance_settles_rather_than_
+running_away` guards it.

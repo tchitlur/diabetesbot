@@ -593,22 +593,26 @@ class RealSimulator:
         return d
 
     def hba1c_step(self, hba1c: float, mean_G: float, days: float) -> float:
-        """dA/dt = k_glyc * mean_G * (1 - A/100) - A/120, integrated over `days`."""
+        """Relax toward the Nathan 2008 steady state with a red-cell time constant.
+
+        dA/dt = (A_ss - A) / tau,  A_ss = hba1c_slope * mean_G + hba1c_intercept,
+        integrated exactly over `days`.
+
+        The specification wrote this as dA/dt = k_glyc*mean_G*(1 - A/100) - A/120 and
+        then required it to reproduce A_ss = 0.0296*mean_G + 2.42 within 0.2 points.
+        It cannot: that form's steady state is a saturating hyperbola in mean_G, the
+        target is a straight line, and the best single k_glyc leaves 0.95 points of
+        error across mean_G 90-260 (measured). This form hits the line exactly at every
+        mean_G, which is what the acceptance criterion actually asks for. See NOTES.md.
+        """
         cfg = self.cfg
-        k, tau = cfg["k_glyc"], cfg["hba1c_clear_days"]
-        a = hba1c
-        steps = max(1, int(days))
-        h = days / steps
-        for _ in range(steps):
-            a += h * (k * mean_G * 100.0 * (1.0 - a / 100.0) - a / tau)
+        target = cfg["hba1c_slope"] * mean_G + cfg["hba1c_intercept"]
+        tau = cfg["hba1c_clear_days"]
+        a = hba1c + (target - hba1c) * (1.0 - math.exp(-max(days, 0.0) / tau))
         return float(max(3.0, min(20.0, a)))
 
     # -- long horizon (Deliverable 4) ---------------------------------------
     def simulate_long(self, state: PatientState, weekly_template: list[Event],
                       params: PatientParams, years: float = 10.0) -> LongTrajectory:
-        try:
-            from engine.longrun import simulate_long as _long
-        except ImportError:                      # Deliverable 4 not landed yet
-            from engine.stub import StubSimulator
-            return StubSimulator().simulate_long(state, weekly_template, params, years)
+        from engine.longrun import simulate_long as _long
         return _long(self, state, weekly_template, params, years)

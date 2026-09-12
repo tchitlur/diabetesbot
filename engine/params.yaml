@@ -104,38 +104,39 @@ defaults:
   ex_kcal_per_min: 5.0     # at intensity 1 and 70 kg
   protein_g_per_kg_lean: 1.2
   lean_partition: 0.20     # fraction of surplus going to lean when protein is adequate
-  k_glyc: 0.0000205        # 1/day per mg/dL; steady state 7.0% at mean_G 154
+  hba1c_slope: 0.0296      # HbA1c %% per mg/dL of mean glucose (Nathan 2008)
+  hba1c_intercept: 2.42
   hba1c_clear_days: 120.0
 
   # ---------------------------------------------------------------- slow (organ) layer
   organ_G_threshold: 140.0 # mg/dL above which glycaemic damage accrues
-  k_eye: 0.00100
+  k_eye: 4.31243e-05
   var_gain: 0.50
-  k_kidney: 0.00067
+  k_kidney: 6.0875e-05
   bp_gain: 0.80
   dehyd_gain: 40.0
-  k_nerve: 0.00083
+  k_nerve: 6.24097e-05
   alc_nerve_gain: 0.055
-  k_cardio: 0.00075
+  k_cardio: 6.10993e-05
   fat_gain: 120.0
   alc_cardio_gain: 0.030
   sleep_gain: 1.20
-  k_liver: 0.00025
+  k_liver: 0.000208125
   alc_liver_gain: 0.220
   fat_liver_gain: 150.0
   body_fat_ref: 0.25       # fat mass fraction above which cardio/liver damage accrues
 
   # risk10[organ] = 1 - exp(-baseline_hazard * exp(beta * damage_10y))
-  baseline_hazard_eye: 0.01573
-  baseline_hazard_kidney: 0.01198
-  baseline_hazard_nerve: 0.01615
-  baseline_hazard_cardio: 0.01572
-  baseline_hazard_liver: 0.02359
-  beta_eye: 1.30
-  beta_kidney: 1.10
-  beta_nerve: 1.10
-  beta_cardio: 1.05
-  beta_liver: 1.00
+  baseline_hazard_eye: 0.0404114
+  baseline_hazard_kidney: 0.0480402
+  baseline_hazard_nerve: 0.0551761
+  baseline_hazard_cardio: 0.063023
+  baseline_hazard_liver: 0.0112053
+  beta_eye: 1.15161
+  beta_kidney: 0.55139
+  beta_nerve: 0.646858
+  beta_cardio: 0.403094
+  beta_liver: 1
 
   # ---------------------------------------------------------------- long-horizon solver
   long_week_dt_min: 5
@@ -169,6 +170,37 @@ defaults:
 # Plausible bounds for the PER-PATIENT fitted parameters (schema.params.PARAM_NAMES).
 # The fitter clips its posterior samples to these. Not population constants: these are
 # the outer limits of what a real person's physiology can look like.
+# Calibration targets for the slow layer. engine/calibrate_risk.py reads these, works
+# out the k_<organ> / baseline_hazard_<organ> / beta_<organ> constants that reproduce
+# them, and writes those back into `defaults` above.
+risk_targets:
+  mean_G_reference: 154.0   # HbA1c 7.0 on the Nathan 2008 line
+  mean_G_high: 222.0        # HbA1c 9.0
+  weekly_ethanol_g: 42.0    # three standard drinks; the reference patient is not teetotal
+  risk10:                   # ten-year probabilities for the reference patient
+    eye: 0.12
+    kidney: 0.08
+    nerve: 0.10
+    cardio: 0.09
+    liver: 0.03
+  high_risk_ratio:          # risk at HbA1c 9.0 as a multiple of the reference
+    eye: 4.0
+    kidney: 3.0
+    nerve: 3.0
+    cardio: 2.0
+    liver: 1.2
+  sources:
+    risk10: >-
+      DCCT/EDIC and UKPDS ten-year complication rates for a type 1 patient held near
+      HbA1c 7.0. Handed down as the calibration targets in the project specification.
+    high_risk_ratio: >-
+      DCCT: intensive therapy (HbA1c ~7) versus conventional (~9) cut retinopathy by
+      70-80%, i.e. a risk ratio of 3.3-5 the other way. Nephropathy and neuropathy
+      responded somewhat less steeply, cardiovascular risk less again, and liver damage
+      in this model is alcohol-driven rather than glycaemic, so it barely moves.
+    mean_G_reference: "Nathan 2008 (ADAG): HbA1c 7.0 corresponds to mean glucose 154 mg/dL."
+    mean_G_high: "Nathan 2008 (ADAG): HbA1c 9.0 corresponds to mean glucose 222 mg/dL."
+
 patient_ranges:
   si_night: [12.0, 130.0]     # mg/dL per U. Highly insulin-resistant to highly sensitive.
   si_day: [10.0, 110.0]
@@ -215,7 +247,8 @@ ranges:
   hyd_recover: [0.0001, 0.0030]
   sleep_debt_decay: [0.10, 0.70]
   train_si_gain: [0.05, 0.35]
-  k_glyc: [0.000015, 0.000030]
+  hba1c_slope: [0.020, 0.040]
+  hba1c_intercept: [1.5, 3.5]
   k_eye: [0.0003, 0.0030]
   k_kidney: [0.0002, 0.0020]
   k_nerve: [0.0003, 0.0025]
@@ -331,9 +364,10 @@ sources:
   ex_kcal_per_min: "~5 kcal/min at moderate intensity for a 70 kg adult."
   protein_g_per_kg_lean: "Threshold above which surplus partitions toward lean mass."
   lean_partition: "Per spec: 20% of surplus goes to lean when protein intake is adequate."
-  k_glyc: >-
-    Calibrated so the HbA1c ODE reaches the Nathan 2008 steady state
-    A1c = 0.0296 * mean_G + 2.42, i.e. 7.0% at mean_G 154 mg/dL.
+  hba1c_slope: >-
+    Nathan 2008 (ADAG): HbA1c = 0.0296 * mean glucose + 2.42 at steady state.
+    HbA1c relaxes toward that line with the red-cell time constant below.
+  hba1c_intercept: "Nathan 2008 (ADAG) intercept."
   hba1c_clear_days: "Red cell lifespan ~120 days."
   organ_G_threshold: "DCCT / UKPDS: complication hazard rises steeply above roughly this mean."
   k_eye: "Calibrated with baseline_hazard_eye and beta_eye to the DCCT 10 y targets below."
